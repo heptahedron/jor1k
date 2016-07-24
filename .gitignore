@@ -12,3 +12,4 @@ utils/fs.xml
 utils/fs
 utils/fs2xml
 utils/packages
+.*.sw*
