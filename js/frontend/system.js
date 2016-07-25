@@ -6,6 +6,7 @@ import LoopSoundBuffer from './dev/sound';
 import Filesystem from './dev/filesystem';
 import utils from './utils';
 import message from './messagehandler';
+// import vm from 
 
 var TERMINAL = 0xDEADBEEF;
 
