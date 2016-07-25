@@ -1,10 +1,4 @@
-// -------------------------------------------------
-// ------------------- SYSTEM ----------------------
-// -------------------------------------------------
-
-"use strict";
 // common
-var message = require('./messagehandler'); // global variable
 var utils = require('./utils');
 var RAM = require('./ram');
 var bzip2 = require('./bzip2');
@@ -67,19 +61,20 @@ var SYSTEM_RUN = 0x1;
 var SYSTEM_STOP = 0x2;
 var SYSTEM_HALT = 0x3; // Idle
 
-function System() {
+function System(eventHandler) {
     // the Init function is called by the master thread.
-    message.Register("LoadAndStart", this.LoadImageAndStart.bind(this) );
-    message.Register("execute", this.MainLoop.bind(this));
-    message.Register("Init", this.Init.bind(this) );
-    message.Register("Reset", this.Reset.bind(this) );
-    message.Register("ChangeCore", this.ChangeCPU.bind(this) );
-    message.Register("PrintOnAbort", this.PrintState.bind(this) );
+    this.eventHandler = eventHandler;
+    this.eventHandler.on('LoadAndStart', () => this.LoadImageAndStart());
+    this.eventHandler.on('execute', () => this.MainLoop());
+    this.eventHandler.on('Init', () => this.Init());
+    this.eventHandler.on('Reset', () => this.Reset());
+    this.eventHandler.on('ChangeCore', () => this.ChangeCPU());
+    this.eventHandler.on('PrintOnAbort', () => this.PrintState());
 
-    message.Register("GetIPS", function(data) {
-        message.Send("GetIPS", this.ips);
-        this.ips=0;
-    }.bind(this));
+    this.eventHandler.on('GetIPS', data => {
+        this.eventHandler.emit('GetIPS', this.ips);
+        this.ips = 0;
+    });
 }
 
 System.prototype.CreateCPU = function(cpuname, arch) {
@@ -92,7 +87,7 @@ System.prototype.CreateCPU = function(cpuname, arch) {
         } else
             throw "Architecture " + arch + " not supported";
     } catch (e) {
-        message.Debug("Error: failed to create CPU:" + e);
+        this.eventHandler.emit('error', "failed to create CPU:" + e);
     }
 };
 
@@ -140,8 +135,8 @@ System.prototype.Init = function(system) {
         this.uartdev0 = new UARTDev(0, this, 0x2);
         this.uartdev1 = new UARTDev(1, this, 0x3);
         this.ethdev = new EthDev(this.ram, this);
-        this.ethdev.TransmitCallback = function(data){
-            message.Send("ethmac", data);
+        this.ethdev.TransmitCallback = data => {
+            this.eventHandler.emit("ethmac", data);
         };
 
         this.fbdev = new FBDev(this.ram);
@@ -221,7 +216,7 @@ System.prototype.Init = function(system) {
 };
 
 System.prototype.RaiseInterrupt = function(line) {
-    //message.Debug("Raise " + line);
+    //message.debug("Raise " + line);
     this.cpu.RaiseInterrupt(line, -1); // raise all cores
     if (this.status == SYSTEM_HALT)
     {
@@ -251,7 +246,7 @@ System.prototype.PrintState = function() {
     // Flush the buffer of the terminal
     this.uartdev0 && this.uartdev0.Step();
     this.uartdev1 && this.uartdev1.Step();
-    message.Debug(this.cpu.toString());
+    this.eventHandler.emit('debug', this.cpu.toString());
 };
 
 System.prototype.SendStringToTerminal = function(str)
@@ -260,7 +255,7 @@ System.prototype.SendStringToTerminal = function(str)
     for (var i = 0; i < str.length; i++) {
         chars.push(str.charCodeAt(i));
     }
-    message.Send("tty0", chars);
+    this.eventHandler.emit("tty0", chars);
 };
 
 System.prototype.LoadImageAndStart = function(url) {
@@ -270,7 +265,7 @@ System.prototype.LoadImageAndStart = function(url) {
         this.SendStringToTerminal("\r\nLoading kernel and hard and basic file system from web server. Please wait ...\r\n");
         utils.LoadBinaryResource(
             url, 
-            this.OnKernelLoaded.bind(this), 
+            () => this.OnKernelLoaded(), 
             function(error){throw error;}
         );
     } else {
@@ -328,17 +323,17 @@ System.prototype.OnKernelLoaded = function(buffer) {
     if (this.cpu.littleendian == false) {
         this.ram.Little2Big(length);
     }
-    message.Debug("Kernel loaded: " + length + " bytes");
+    this.eventHandler.emit("debug","Kernel loaded: " + length + " bytes");
     this.SendStringToTerminal("Booting\r\n");
     this.SendStringToTerminal("================================================================================");
     // we can start the boot process already, even if the filesystem is not yet ready
 
     this.cpu.Reset();
     this.cpu.AnalyzeImage();
-    message.Debug("Starting emulation");
+    this.eventHandler.emit('debug', "Starting emulation");
     this.status = SYSTEM_RUN;
 
-    message.Send("execute", 0);
+    this.eventHandler.emit('execute', 0);
 };
 
 // the kernel has sent a halt signal, so stop everything until the next interrupt is raised
@@ -347,10 +342,11 @@ System.prototype.HandleHalt = function() {
     if (delta == -1) return;
         this.idlemaxwait = delta;
         var mswait = Math.floor(delta / this.ticksperms / this.timer.correction + 0.5);
-        //message.Debug("wait " + mswait);
+        //message.debug("wait " + mswait);
         
         if (mswait <= 1) return;
-        if (mswait > 1000) message.Debug("Warning: idle for " + mswait + "ms");
+        if (mswait > 1000)
+            this.eventHandler.emit('debug', "Warning: idle for " + mswait + "ms");
         this.idletime = utils.GetMilliseconds();
         this.status = SYSTEM_HALT;
         this.idletimeouthandle = setTimeout(function() {
@@ -365,11 +361,11 @@ System.prototype.HandleHalt = function() {
 
 System.prototype.MainLoop = function() {
     if (this.status != SYSTEM_RUN) return;
-    message.Send("execute", 0);
+    this.eventHandler.Send("execute", 0);
 
     // execute the cpu loop for "instructionsperloop" instructions.
     var stepsleft = this.cpu.Step(this.timer.instructionsperloop, this.timer.timercyclesperinstruction);
-    //message.Debug(stepsleft);
+    //message.debug(stepsleft);
     var totalsteps = this.timer.instructionsperloop - stepsleft;
     totalsteps++; // at least one instruction
     this.ips += totalsteps;

@@ -5,15 +5,14 @@ import Ethernet from './dev/ethernet';
 import LoopSoundBuffer from './dev/sound';
 import Filesystem from './dev/filesystem';
 import utils from './utils';
-import message from './messagehandler';
-// import vm from 
+import EventHandler from '../lib/event-handler';
+import Jor1kVM from '../vm/system.js';
 
 var TERMINAL = 0xDEADBEEF;
 
 function jor1kGUI(parameters)
 {
     this.params = parameters;
-    this.message = message;
 
     // --- parameters parsing ---
     this.params.system = this.params.system  || {};
@@ -39,16 +38,9 @@ function jor1kGUI(parameters)
         this.params.fs.extendedfsURL = this.params.path + this.params.fs.extendedfsURL;
     }
 
-    this.params.userid = this.params.userid || "";
-
-    // ----------------------
-
-    this.worker = (this.params.worker instanceof Worker) ?
-        this.params.worker : new Worker("jor1k-worker-min.js");
-
-    message.SetWorker(this.worker);
-
-    // ----
+    this.params.vm instanceof Jor1kVM || throw 'Bad VM parameter!';
+    this.vm = this.params.vm;
+    this.eventHandler = this.vm.getEventHandler();
 
     if (this.params.clipboardid) {
         this.clipboard = document.getElementById(this.params.clipboardid);
@@ -60,7 +52,7 @@ function jor1kGUI(parameters)
 
     if (this.params.fbid) {
         this.framebuffer = new Framebuffer(this.params.fbid, this.params.fps);
-        message.Register("GetFB", this.framebuffer.Update.bind(this.framebuffer));
+        this.eventHandler.on('GetFB', this.framebuffer.Update.bind(this.framebuffer));
     }
 
     this.terms = [];
@@ -79,8 +71,8 @@ function jor1kGUI(parameters)
     this.fs = new Filesystem(this.params.syncURL, this.params.userid);
 
     this.sound = new LoopSoundBuffer(22050);
-    message.Register("sound",      this.sound.AddBuffer.bind(this.sound));
-    message.Register("sound.rate", this.sound.SetRate.bind(this.sound));
+    this.eventHandler.on('sound',      this.sound.AddBuffer.bind(this.sound));
+    this.eventHandler.on('sound.rate', this.sound.SetRate.bind(this.sound));
 
    if (this.clipboard) {
    this.clipboard.onpaste = function(event) {
@@ -136,7 +128,7 @@ function jor1kGUI(parameters)
         if ((this.lastMouseDownTarget == TERMINAL) || (this.lastMouseDownTarget == this.clipboard)) {
             return this.terminput.OnKeyPress(event);
         }
-        message.Send("keypress", {keyCode:event.keyCode, charCode:event.charCode});
+        this.eventHandler.emit("keypress", {keyCode:event.keyCode, charCode:event.charCode});
         return false;
     }.bind(this);
 
@@ -145,7 +137,7 @@ function jor1kGUI(parameters)
         if ((this.lastMouseDownTarget == TERMINAL) || (this.lastMouseDownTarget == this.clipboard)) {
             return this.terminput.OnKeyDown(event);
         }
-        message.Send("keydown", {keyCode:event.keyCode, charCode:event.charCode});
+        this.eventHandler.emit("keydown", {keyCode:event.keyCode, charCode:event.charCode});
         return false;
     }.bind(this);
 
@@ -154,27 +146,27 @@ function jor1kGUI(parameters)
         if ((this.lastMouseDownTarget == TERMINAL) || (this.lastMouseDownTarget == this.clipboard)) {
             return this.terminput.OnKeyUp(event);
         }
-        message.Send("keyup", {keyCode:event.keyCode, charCode:event.charCode});
+        this.eventHandler.emit("keyup", {keyCode:event.keyCode, charCode:event.charCode});
         return false;
     }.bind(this);
 
     if (this.params.relayURL) {
         this.ethernet = new Ethernet(this.params.relayURL);
-        this.ethernet.onmessage = function(e) {
-            message.Send("ethmac", e.data);
-        }.bind(this);
-        message.Register("ethmac", this.ethernet.SendFrame.bind(this.ethernet));
+        this.ethernet.onmessage = e => {
+            this.eventHandler.emit("ethmac", e.data);
+        };
+        this.eventHandler.on("ethmac", this.ethernet.SendFrame.bind(this.ethernet));
     }
 
-    message.Register("GetIPS", this.ShowIPS.bind(this));
-    message.Register("execute", this.Execute.bind(this));
-    message.Register("WorkerReady", this.OnWorkerReady.bind(this));
+    this.eventHandler.on("GetIPS", this.ShowIPS.bind(this));
+    this.eventHandler.on("execute", this.Execute.bind(this));
+    this.eventHandler.on("WorkerReady", this.OnWorkerReady.bind(this));
 }
 
 jor1kGUI.prototype.OnWorkerReady = function() {
     this.Reset();
-    window.setInterval(function() {
-        message.Send("GetIPS", 0);
+    window.setInterval(() => {
+        this.eventHandler.on("GetIPS", 0);
     }, 1000);
 };
 
@@ -185,7 +177,7 @@ jor1kGUI.prototype.Execute = function() {
         this.executepending = true;
     } else {
         this.executepending = false; 
-        message.Send("execute", 0);
+        this.eventHandler.emit("execute", 0);
     }
 };
 
@@ -203,7 +195,7 @@ jor1kGUI.prototype.ShowIPS = function(ips) {
 
 
 jor1kGUI.prototype.ChangeCore = function(core) {
-    message.Send("ChangeCore", core);
+    this.eventHandler.emit("ChangeCore", core);
 };
 
 
@@ -212,10 +204,10 @@ jor1kGUI.prototype.Reset = function () {
     this.userpaused = false;
     this.executepending = false; // if we rec an execute message while paused      
 
-    message.Send("Init", this.params.system);
-    message.Send("Reset");
-    message.Send("LoadAndStart", this.params.system.kernelURL);
-    message.Send("LoadFilesystem", this.params.fs);
+    this.eventHandler.emit("Init", this.params.system);
+    this.eventHandler.emit("Reset");
+    this.eventHandler.emit("LoadAndStart", this.params.system.kernelURL);
+    this.eventHandler.emit("LoadFilesystem", this.params.fs);
 
     if (this.terms.length > 0) {
         this.terms.forEach(function (term) {
@@ -233,7 +225,7 @@ jor1kGUI.prototype.Pause = function(pause) {
     this.userpaused = pause;
     if(! this.userpaused && this.executepending) {
       this.executepending = false;
-       message.Send("execute", 0);
+       this.eventHandler.emit("execute", 0);
     }
     this.terms.forEach(function (term) {
         term.PauseBlink(pause);
@@ -243,8 +235,8 @@ jor1kGUI.prototype.Pause = function(pause) {
 // sends the input characters for the terminal
 jor1kGUI.prototype.SendChars = function(chars) {
     if (this.lastMouseDownTarget == this.fbcanvas) return;
-    message.Send(this.activeTTY, chars);
-    message.Send("htif.term0.Transfer", chars);
+    this.eventHandler.emit(this.activeTTY, chars);
+    this.eventHandler.emit("htif.term0.Transfer", chars);
 }
 
 // Returns the terminal attached to tty
