@@ -47,7 +47,8 @@
     "jshint": "latest",
     "lab": "^5.2.0",
     "webpack": "^1.13.1",
-    "webpack-dev-server": "^1.14.1"
+    "webpack-dev-server": "^1.14.1",
+    "worker-loader": "^0.7.1"
   },
   "scripts": {
     "test": "lab --ignore onmessage -v test/cpu-facade.js",

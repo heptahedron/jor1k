@@ -1,20 +1,13 @@
-// -------------------------------------------------
-// -------------------- Master ---------------------
-// -------------------------------------------------
-
-var Terminal = require('./dev/terminal');
-var TerminalInput = require('./dev/terminal-input');
-var Framebuffer = require('./dev/framebuffer');
-var Ethernet = require('./dev/ethernet');
-var LoopSoundBuffer = require('./dev/sound');
-var Filesystem = require('./dev/filesystem');
-var utils = require('./utils');
-var message = require('./messagehandler');
+import Terminal from './dev/terminal';
+import TerminalInput from './dev/terminal-input';
+import Framebuffer from './dev/framebuffer';
+import Ethernet from './dev/ethernet';
+import LoopSoundBuffer from './dev/sound';
+import Filesystem from './dev/filesystem';
+import utils from './utils';
+import message from './messagehandler';
 
 var TERMINAL = 0xDEADBEEF;
-
-"use strict";
-
 
 function jor1kGUI(parameters)
 {
